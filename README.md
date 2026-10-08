@@ -1,6 +1,7 @@
-# Coolify Error Watchdog
+# Pompadour Platform Watchdog
 
-Nightly automation for every project running on the Coolify instance: reads
+Error-monitoring engine of the Pompadour platform (`pompadour_platform` orchestrates it per app;
+this repo was previously named `coolify-watchdog`). Nightly automation for every project running on a Coolify instance: reads
 production container logs via the Coolify API, detects **new** errors, and has
 Claude open a **draft PR** in the affected project with a root-cause analysis
 and a proposed fix — assigned to the repo owner, so it arrives as a GitHub
