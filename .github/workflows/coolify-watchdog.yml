@@ -30,7 +30,7 @@ on:
       engine_repo:
         description: "Repo hosting the watchdog script (owner/name)"
         type: string
-        default: "KoenQQ/pompadour-platform-watchdog"
+        default: "KoenQQ/pompadour_platform_watchdog"
         required: false
       engine_ref:
         description: "Git ref of the engine repo to use"
