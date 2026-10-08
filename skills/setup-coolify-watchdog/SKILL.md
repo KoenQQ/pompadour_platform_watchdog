@@ -7,7 +7,7 @@ description: Install the nightly Coolify error watchdog into the current reposit
 
 This skill installs the nightly error watchdog into the current repository.
 The engine (log parsing, fingerprinting, Claude analysis) lives centrally in
-`KoenQQ/coolify-watchdog`; this repo only gets a thin caller workflow.
+`KoenQQ/pompadour-platform-watchdog`; this repo only gets a thin caller workflow.
 
 ## Steps
 
@@ -32,7 +32,7 @@ The engine (log parsing, fingerprinting, Claude analysis) lives centrally in
    - Secret `ANTHROPIC_API_KEY` **or** `CLAUDE_CODE_OAUTH_TOKEN` (from
      `claude setup-token`, uses the Claude Pro/Max subscription).
    - Secret `ENGINE_REPO_TOKEN` — fine-grained PAT with read (Contents) access
-     to `KoenQQ/coolify-watchdog`; only needed while that repo is private.
+     to `KoenQQ/pompadour-platform-watchdog`; only needed while that repo is private.
    - Variable `COOLIFY_API_URL` — the Coolify base URL.
    - Variable `COOLIFY_APPS` — JSON, e.g.
      `[{"name":"backend","uuid":"<uuid-from-step-1>"}]`.
@@ -63,7 +63,7 @@ permissions:
 
 jobs:
   watchdog:
-    uses: KoenQQ/coolify-watchdog/.github/workflows/coolify-watchdog.yml@main
+    uses: KoenQQ/pompadour-platform-watchdog/.github/workflows/coolify-watchdog.yml@main
     with:
       dry_run: ${{ inputs.dry_run == true }}
       coolify_api_url: ${{ vars.COOLIFY_API_URL }}
@@ -77,7 +77,7 @@ jobs:
 
 ## Notes
 
-- If `KoenQQ/coolify-watchdog` is private, it must have: Settings → Actions →
+- If `KoenQQ/pompadour-platform-watchdog` is private, it must have: Settings → Actions →
   General → Access → "Accessible from repositories owned by the user".
   If it is public, no extra access setup is needed and `ENGINE_REPO_TOKEN`
   can be omitted.
