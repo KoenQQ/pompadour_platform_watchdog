@@ -96,6 +96,13 @@ backups. The two complement each other: Coolify notifications tell you *that*
 something visibly broke; this check is the on-command deep look, including
 log errors that never flip a container to "unhealthy".
 
+## Morning report in plain language
+
+The `coolify-morning-report` Claude Code skill (`skills/coolify-morning-report/`)
+triggers the system check workflow, reads the result, and explains any
+problems conversationally — handy as the prompt of a scheduled daily chat.
+Copy it to `~/.claude/skills/` and run `/coolify-morning-report`.
+
 ## Development
 
 ```bash
