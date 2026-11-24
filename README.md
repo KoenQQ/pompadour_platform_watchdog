@@ -1,109 +1,112 @@
-# Coolify Error Watchdog
+# Coolify Watchdog
 
-Nightly automation for every project running on the Coolify instance: reads
-production container logs via the Coolify API, detects **new** errors, and has
-Claude open a **draft PR** in the affected project with a root-cause analysis
-and a proposed fix — assigned to the repo owner, so it arrives as a GitHub
-mobile push notification in the morning.
+On-command broad system check for a Coolify instance. One command answers
+"is everything still fine?" from anywhere with internet:
 
 ```
-02:30 UTC nightly (GitHub Actions, in each project repo)
- ├─ fetch_errors.py      pull logs via Coolify API, extract + fingerprint errors
- ├─ dedupe               skip fingerprints that already have a watchdog PR/branch
- └─ claude-code-action   for new errors (max 3/night): root-cause analysis,
-                         branch watchdog/<date>-<fingerprint>, minimal fix,
-                         draft PR labeled `log-watchdog`
+$ python3 scripts/coolify_watchdog/check.py
+
+Coolify system check — https://apps.example.com — 2026-11-24T07:42:35+00:00
+
+✓ Instance reachable (Coolify v4.0.0-beta.420)
+✓ Server hetzner-1 (reachable=yes, usable=yes)
+
+Applications (2)
+  ✓ backend  running:healthy
+  ✗ worker   exited:unhealthy
+
+Log errors (last 26h)
+  [NEW ] 0a4abc77dc  backend  traceback  3x  last 2026-11-24T06:12:44+00:00
+         ValueError: boom
+
+Summary: 2 problem(s)
+  - application 'worker' is exited:unhealthy
+  - 1 new error fingerprint(s) in application logs
 ```
 
-This repo is the **engine**: the reusable workflow
-(`.github/workflows/coolify-watchdog.yml`, `workflow_call`-only), the log
-parser (`scripts/coolify_watchdog/fetch_errors.py`, stdlib-only), the caller
-template, and the setup skill. Projects contain only a ~40-line caller
-workflow — fixes and improvements here reach every project automatically.
+What one run checks, via the Coolify API only (no SSH, nothing installed on
+the servers):
 
-No new errors → a project's run ends in ~1 minute and Claude is never invoked
-(zero Claude cost on quiet nights).
+1. **Instance** — reachable, token valid, Coolify version.
+2. **Servers** — `is_reachable` / `is_usable` flags.
+3. **Applications, services, databases** — live status of everything on the
+   instance (auto-discovered; no per-app configuration).
+4. **Deployments** — anything currently stuck deploying.
+5. **Application logs** — error events (Python tracebacks, `ERROR`/`CRITICAL`
+   lines, HTTP 5xx) extracted and fingerprinted, with **NEW** vs *seen*
+   marking against your previous run — so you immediately see what broke
+   since you last looked.
 
-## Adding the watchdog to a project
+Exit codes: `0` all healthy · `1` problems found · `2` check could not run.
 
-Either run the `setup-coolify-watchdog` Claude Code skill (copy
-`skills/setup-coolify-watchdog/` to `~/.claude/skills/` once, then run
-`/setup-coolify-watchdog` inside the project), or manually:
+## Setup (laptop)
 
-1. Copy `templates/caller-workflow.yml` into the project as
-   `.github/workflows/coolify-watchdog.yml`.
-2. Configure the project repo (Settings → Secrets and variables → Actions):
+Needs only Python 3.10+ — the script is stdlib-only, nothing to install.
 
-   | Type     | Name                      | Value                                                                 |
-   |----------|---------------------------|-----------------------------------------------------------------------|
-   | Secret   | `COOLIFY_API_TOKEN`       | Coolify UI → Keys & Tokens → API tokens → new token                    |
-   | Secret   | `ANTHROPIC_API_KEY`       | Anthropic Console key (pay-per-use API billing) — **or** the one below |
-   | Secret   | `CLAUDE_CODE_OAUTH_TOKEN` | From `claude setup-token`; draws from the Claude Pro/Max subscription  |
-   | Secret   | `ENGINE_REPO_TOKEN`       | Fine-grained PAT with read access to this repo — only if it is private |
-   | Variable | `COOLIFY_API_URL`         | e.g. `https://apps.pompadour.ventures`                                 |
-   | Variable | `COOLIFY_APPS`            | `[{"name":"backend","uuid":"<coolify-app-uuid>"}]`                     |
+```bash
+git clone https://github.com/KoenQQ/coolify-watchdog.git
+mkdir -p ~/.coolify-watchdog
+cat > ~/.coolify-watchdog/env <<'EOF'
+COOLIFY_API_URL=https://apps.example.com
+COOLIFY_API_TOKEN=<Coolify UI → Keys & Tokens → API tokens>
+EOF
+chmod 600 ~/.coolify-watchdog/env
 
-   The app UUID is in the Coolify UI URL when the application is open (or via
-   `GET /api/v1/applications`).
+python3 coolify-watchdog/scripts/coolify_watchdog/check.py
+```
 
-3. **First run:** project's Actions tab → *Coolify Error Watchdog* → Run
-   workflow → `dry_run: true`. The job summary lists what was found without
-   invoking Claude or opening PRs — this validates the token and UUIDs.
+Useful flags:
 
-### Repo visibility
+| Flag | Effect |
+|---|---|
+| `--since-hours 72` | log error window (default: since your last check, else 26h) |
+| `--log-lines 10000` | log lines scanned per application (default 3000) |
+| `--apps backend,worker` | only scan logs of matching applications |
+| `--no-logs` | status-only check (fast, tiny bandwidth) |
+| `--json` | full machine-readable report (includes full log excerpts) |
+| `--all` | also show fingerprints silenced via `ignore.txt` |
 
-- **Public engine repo (simplest):** no `ENGINE_REPO_TOKEN`, no access setup.
-  The engine contains no secrets or project-specific data.
-- **Private engine repo:** enable Settings → Actions → General → Access →
-  *"Accessible from repositories owned by the user"* here, and add
-  `ENGINE_REPO_TOKEN` to each project.
+State lives in `~/.coolify-watchdog/state.json`: seen fingerprints (for the
+NEW marker) and the time of your last run (the default log window). To
+silence a recurring, accepted error permanently, add its fingerprint to
+`scripts/coolify_watchdog/ignore.txt`.
 
-## How new errors become PRs
+## Run it from your phone (GitHub Actions)
 
-- Every error event (Python traceback, `ERROR`/`CRITICAL` log line, HTTP 5xx)
-  is **fingerprinted**: a 10-char hash of the normalized signature (exception
-  type + raising function, with line numbers / UUIDs / ids stripped). The same
-  bug on different nights yields the same fingerprint.
-- A fingerprint is **skipped** if any `watchdog/*` branch or `log-watchdog` PR
-  (open *or* closed) in the project already references it — so rejecting a
-  proposed fix doesn't cause a re-spam every night.
-  - **Retry an error:** delete its PR *and* `watchdog/...` branch.
-  - **Silence an error permanently:** add its fingerprint to the project's
-    `scripts/coolify_watchdog/ignore.txt`.
-- At most **3 new errors per night** per project are analyzed (cost/noise
-  cap); the rest are listed in the job summary and picked up the next night.
-- Each PR body contains: *What happened* (log excerpt), *Root cause* (with
-  file:line references), *Proposed fix*, *Confidence & risks*, *How to verify*.
-  If Claude is not confident in a fix, the PR contains analysis only. Log
-  excerpts are treated as untrusted data — the prompt forbids following
-  instructions embedded in them.
+The same check runs as an on-demand GitHub Actions workflow in this repo —
+handy when you only have your phone:
 
-## Morning report (optional)
+1. Configure this repo (Settings → Secrets and variables → Actions):
+   - Secret `COOLIFY_API_TOKEN`
+   - Variable `COOLIFY_API_URL`
+2. GitHub app/web → Actions → **Coolify System Check** → Run workflow.
 
-`skills/coolify-morning-report/` turns the watchdog's outputs into a daily
-plain-language briefing: it discovers every watchdog-enabled repo, reads last
-night's runs and new `log-watchdog` PRs, and explains what broke, why, and
-what needs a decision. Designed as the prompt of a scheduled daily chat
-(e.g. 05:30 UTC, after the nightly runs). It reads only GitHub — no Coolify
-or Anthropic credentials needed. Install locally by copying the skill dir to
-`~/.claude/skills/`, or reference the skill file by URL from a scheduled
-cloud session.
+Green run = everything healthy. Red run = problems found — open the job
+summary for the list and the log excerpts. (The runner is stateless, so every
+error in the window is marked NEW there.) Uncomment the `schedule:` block in
+`.github/workflows/coolify-watchdog.yml` to also run it automatically.
 
-## Costs (per project)
+## Push alerts when something breaks
 
-- **Quiet night:** ~1 min of GitHub Actions, zero Claude usage
-  (≈30 min/month — free tier is 2,000–3,000 min/month).
-- **Error night:** one Claude session, roughly $0.5–$3 per error on API
-  billing, or no marginal cost with a subscription token. Hard-capped at 3
-  errors/night.
+This tool is pull-based by design. For push alerts, use Coolify's built-in
+notifications (Coolify UI → **Notifications**): connect Telegram, Discord,
+Slack, Email or Pushover and Coolify messages you on failed deployments,
+containers that stop or turn unhealthy, unreachable servers and failed
+backups. The two complement each other: Coolify notifications tell you *that*
+something visibly broke; this check is the on-command deep look, including
+log errors that never flip a container to "unhealthy".
 
 ## Development
 
 ```bash
-pytest scripts/coolify_watchdog/        # parser + fingerprint unit tests
+pytest scripts/coolify_watchdog/   # parser + check unit tests
 ```
 
-`fetch_errors.py` is stdlib-only on purpose — no dependencies — so it runs on
-a bare `ubuntu-latest` runner. CI (`.github/workflows/tests.yml`) runs the
-test suite on every push. Callers can pin a specific engine version with the
-`engine_ref` input (defaults to `main`).
+`fetch_errors.py` holds the log parsing and fingerprinting (an error class
+keeps the same 10-char fingerprint across nights, line-number changes and
+request ids); `check.py` is the CLI on top. Both are stdlib-only on purpose.
+CI runs the suite on every push.
+
+> The previous architecture — a nightly reusable workflow that each project
+> repo called, with Claude opening draft fix-PRs — was replaced by this
+> on-demand design in Nov 2026 and lives on in git history if ever needed.
